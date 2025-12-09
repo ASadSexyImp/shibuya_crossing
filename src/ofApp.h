@@ -1,79 +1,100 @@
 #pragma once
 
 #include "ofMain.h"
+#include <algorithm>
 
-// 人クラスを定義
-class Person {
+// 人の定義
+class Agent {
 public:
-    ofVec2f pos;       // 現在位置
-    ofVec2f target;    // 目的地
-    float speed;       // 歩く速さ
-    ofColor color;     // 服の色
+    ofVec2f pos, vel, target;
+    float speed;
+    ofColor color;
+    float size;
     
-    // コンストラクタ
-    Person() {
-        speed = ofRandom(1.5, 3.5);
-        // 服の色をランダムに（少し暗めでおしゃれに）
-        color = ofColor::fromHsb(ofRandom(255), 150, 200);
+    void setup(ofVec2f startPos) {
+        pos = startPos;
+        target = startPos;
+        speed = ofRandom(2.0, 4.0);
+        size = ofRandom(3, 6);
+        
+        // サイバーパンクな色使い
+        if(ofRandom(1.0) < 0.1) color = ofColor::cyan;
+        else if(ofRandom(1.0) < 0.2) color = ofColor::magenta;
+        else color = ofColor(200, 255, 255, 200);
     }
     
-    // 位置を更新する関数
-    void update(bool isGreenLight) {
-        if (isGreenLight) {
-            // 目的地に向かって進むベクトル計算
+    void update(bool isGreen, const vector<Agent>& others, int index) {
+        ofVec2f acc(0,0);
+        
+        // 1. ターゲットへの力
+        if(isGreen) {
             ofVec2f dir = target - pos;
             float dist = dir.length();
+            if(dist > 10) {
+                dir.normalize();
+                acc += (dir * speed - vel) * 0.1;
+            }
             
-            // 目的地に近づいたらゆっくりにする、遠ければ進む
-            if (dist > 5.0) {
-                dir.normalize(); // ベクトルの長さを1にする
-                pos += dir * speed;
-                
-                // 少しノイズ（ふらつき）を入れて人間らしく
-                pos.x += ofRandom(-0.5, 0.5);
-                pos.y += ofRandom(-0.5, 0.5);
+            // 2. 分離（人同士）
+            for(int i=0; i<others.size(); i++){
+                if(i == index) continue;
+                float d = pos.squareDistance(others[i].pos);
+                if(d < 400 && d > 0) { // 半径20px以内
+                    ofVec2f diff = pos - others[i].pos;
+                    diff.normalize();
+                    acc += diff * 1.5;
+                }
             }
         } else {
-            // 赤信号の時は待機（少しモジモジさせる）
-            pos.x += ofRandom(-0.2, 0.2);
-            pos.y += ofRandom(-0.2, 0.2);
+            // 待機中はゆらゆらする
+            acc += ofVec2f(ofRandom(-0.5,0.5), ofRandom(-0.5,0.5));
         }
+        
+        // 3. マウスからの干渉（空間の歪み）
+        ofVec2f mouse(ofGetMouseX(), ofGetMouseY());
+        float distToMouse = pos.distance(mouse);
+        if(distToMouse < 200) {
+            ofVec2f esc = pos - mouse;
+            esc.normalize();
+            acc += esc * (200 - distToMouse) * 0.05;
+        }
+
+        vel += acc;
+        vel.limit(isGreen ? speed * 1.5 : 1.0);
+        pos += vel;
+        
+        // 画面端処理
+        if(pos.x < 0) pos.x += ofGetWidth();
+        if(pos.x > ofGetWidth()) pos.x -= ofGetWidth();
+        if(pos.y < 0) pos.y += ofGetHeight();
+        if(pos.y > ofGetHeight()) pos.y -= ofGetHeight();
     }
     
     void draw() {
         ofSetColor(color);
-        ofDrawCircle(pos, 3); // 人を小さな円で描画
+        ofDrawCircle(pos, size);
     }
 };
 
-
 class ofApp : public ofBaseApp{
-
-	public:
-		void setup() override;
-		void update() override;
-		void draw() override;
-		void exit() override;
-
-		// 必要な変数
-    	vector<Person> people;  // 人のリスト
-    	bool isGreenLight;      // 信号の状態
-    	float timer;            // 時間計測用
+public:
+    void setup();
+    void update();
+    void draw();
     
-    	// 交差点の4つの角の座標（待機場所）
-    	vector<ofVec2f> corners;
+    void drawCyberCrosswalk(float x, float y, float w, float h, bool vertical);
+    void mousePressed(int x, int y, int button);
 
-		void keyPressed(int key) override;
-		void keyReleased(int key) override;
-		void mouseMoved(int x, int y ) override;
-		void mouseDragged(int x, int y, int button) override;
-		void mousePressed(int x, int y, int button) override;
-		void mouseReleased(int x, int y, int button) override;
-		void mouseScrolled(int x, int y, float scrollX, float scrollY) override;
-		void mouseEntered(int x, int y) override;
-		void mouseExited(int x, int y) override;
-		void windowResized(int w, int h) override;
-		void dragEvent(ofDragInfo dragInfo) override;
-		void gotMessage(ofMessage msg) override;
-		
+    vector<Agent> agents;
+    bool isGreen;
+    float signalTimer;
+    float maxTime = 10.0;
+    
+    // 衝撃波エフェクト用
+    struct Ripple {
+        ofVec2f pos;
+        float radius;
+        float alpha;
+    };
+    vector<Ripple> ripples;
 };
