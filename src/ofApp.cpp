@@ -1,242 +1,377 @@
 #include "ofApp.h"
 
-//--------------------------------------------------------------
+// --- Agentクラス ---
+void Agent::setup(ofVec2f startPos) {
+    pos = startPos;
+    target = startPos;
+    isMoving = false;
+    vel.set(0, 0);
+    
+    float r = ofRandom(1.0);
+    if (r < 0.1) {
+        color = ofColor(255, 0, 100); // Neon Pink
+        maxSpeed = ofRandom(3.0, 4.5);
+        size = 4;
+    } else if (r < 0.3) {
+        color = ofColor(0, 255, 255); // Cyan
+        maxSpeed = ofRandom(2.5, 3.5);
+        size = 3.5;
+    } else if (r < 0.4) {
+        color = ofColor(255, 255, 0); // Yellow
+        maxSpeed = ofRandom(1.5, 2.5);
+        size = 4;
+    } else {
+        color = ofColor(200, 200, 255); // White-Blue
+        maxSpeed = ofRandom(2.8, 3.8);
+        size = 3;
+    }
+}
+
+void Agent::update(bool isGreen, const vector<Agent>& others, int index, float centerRadius) {
+    ofVec2f acc(0, 0);
+    float distToCenter = pos.distance(ofVec2f(ofGetWidth()/2, ofGetHeight()/2));
+    
+    bool shouldMove = false;
+    if (isGreen) {
+        shouldMove = true;
+    } else {
+        if (distToCenter < centerRadius) shouldMove = true;
+    }
+    
+    if (shouldMove) {
+        ofVec2f desired = target - pos;
+        float d = desired.length();
+        
+        if (d > 10) {
+            desired.normalize();
+            desired *= maxSpeed;
+            ofVec2f steer = desired - vel;
+            acc += steer * 0.1; 
+        }
+        
+        // --- 修正箇所 1: std::max / std::min を使用 ---
+        int range = 30; 
+        int startI = std::max(0, index - range);
+        int endI = std::min((int)others.size(), index + range);
+        
+        int count = 0;
+        ofVec2f sepSum(0,0);
+        float sepDist = 20.0;
+        
+        for(int i=startI; i<endI; i++){
+            if(i == index) continue;
+            float dist = pos.distance(others[i].pos);
+            if(dist > 0 && dist < sepDist) {
+                ofVec2f diff = pos - others[i].pos;
+                diff.normalize();
+                diff /= dist; 
+                sepSum += diff;
+                count++;
+            }
+        }
+        
+        if(count > 0) {
+            sepSum /= count;
+            sepSum.normalize();
+            sepSum *= maxSpeed;
+            ofVec2f steer = sepSum - vel;
+            acc += steer * 1.5; 
+        }
+        isMoving = true;
+    } else {
+        vel *= 0.8; 
+        isMoving = false;
+    }
+    
+    ofVec2f mouse(ofGetMouseX(), ofGetMouseY());
+    if (pos.distance(mouse) < 100) {
+        ofVec2f esc = pos - mouse;
+        esc.normalize();
+        acc += esc * 2.0;
+        isMoving = true;
+    }
+
+    vel += acc;
+    vel.limit(maxSpeed);
+    pos += vel;
+    
+    float w = ofGetWidth();
+    float h = ofGetHeight();
+    if(pos.x < -50) pos.x += w+100;
+    if(pos.x > w+50) pos.x -= w+100;
+    if(pos.y < -50) pos.y += h+100;
+    if(pos.y > h+50) pos.y -= h+100;
+}
+
+void Agent::draw() {
+    ofSetColor(color);
+    ofDrawCircle(pos, size);
+    if (isMoving && vel.length() > 1.0) {
+        ofSetColor(color, 100);
+        ofDrawLine(pos, pos - vel * 3.0);
+    }
+}
+
+
+// --- ofApp ---
+
 void ofApp::setup(){
     ofSetFrameRate(60);
-    ofBackground(10); // 深い黒
+    ofBackground(0); 
+    ofSetCircleResolution(30);
     
     isGreen = false;
     signalTimer = 0;
     
-    // エージェント生成（少なめでスタイリッシュに）
-    agents.resize(400);
+    roadWidth = ofGetHeight() * 0.55; 
+    centerRadius = roadWidth * 0.6; 
+    
+    agents.resize(800); 
     
     float w = ofGetWidth();
     float h = ofGetHeight();
     
-    // 初期配置
     for(auto &a : agents) {
-        // 四隅のエリアに適当に配置
-        float x = (ofRandom(1.0) > 0.5) ? ofRandom(w*0.8, w) : ofRandom(0, w*0.2);
-        float y = (ofRandom(1.0) > 0.5) ? ofRandom(h*0.8, h) : ofRandom(0, h*0.2);
+        int corner = (int)ofRandom(4);
+        float x, y;
+        float rw = roadWidth/2;
+        if(corner == 0) { x = ofRandom(0, w/2-rw); y = ofRandom(0, h/2-rw); }
+        else if(corner == 1) { x = ofRandom(w/2+rw, w); y = ofRandom(0, h/2-rw); }
+        else if(corner == 2) { x = ofRandom(w/2+rw, w); y = ofRandom(h/2+rw, h); }
+        else { x = ofRandom(0, w/2-rw); y = ofRandom(h/2+rw, h); }
         a.setup(ofVec2f(x, y));
     }
 }
 
-//--------------------------------------------------------------
 void ofApp::update(){
-    // 信号タイマー
     signalTimer += ofGetLastFrameTime();
-    if(signalTimer > maxTime) {
+    
+    if(signalTimer > 8.0) {
         signalTimer = 0;
         isGreen = !isGreen;
         
-        // 信号切り替え時にターゲット再設定
         if(isGreen) {
+            float w = ofGetWidth();
+            float h = ofGetHeight();
+            float rw = roadWidth/2 + 50;
+            
             for(auto &a : agents) {
-                // 画面の反対側を目指す
-                a.target.x = ofGetWidth() - a.pos.x + ofRandom(-100, 100);
-                a.target.y = ofGetHeight() - a.pos.y + ofRandom(-100, 100);
+                int targetArea = (int)ofRandom(4);
+                ofVec2f dest;
+                
+                if(targetArea == 0) dest.set(ofRandom(0, w/2-rw), ofRandom(0, h/2-rw));
+                else if(targetArea == 1) dest.set(ofRandom(w/2+rw, w), ofRandom(0, h/2-rw));
+                else if(targetArea == 2) dest.set(ofRandom(w/2+rw, w), ofRandom(h/2+rw, h));
+                else dest.set(ofRandom(0, w/2-rw), ofRandom(h/2+rw, h));
+                
+                if(a.pos.distance(dest) < roadWidth) {
+                     dest.x = w - dest.x; 
+                     dest.y = h - dest.y;
+                }
+                a.target = dest;
             }
         }
     }
     
-    // エージェント更新
     for(int i=0; i<agents.size(); i++) {
-        agents[i].update(isGreen, agents, i);
-        
-        // 衝撃波の影響
-        for(auto &r : ripples) {
-            float d = agents[i].pos.distance(r.pos);
-            if(d > r.radius - 20 && d < r.radius + 20) {
-                ofVec2f push = agents[i].pos - r.pos;
-                push.normalize();
-                agents[i].vel += push * 5.0; // 吹き飛ばす
-            }
-        }
-    }
-    
-    // 衝撃波の更新
-    for(int i=ripples.size()-1; i>=0; i--) {
-        ripples[i].radius += 10.0; // 広がる速度
-        ripples[i].alpha -= 2.0;   // フェードアウト
-        if(ripples[i].alpha <= 0) ripples.erase(ripples.begin() + i);
+        agents[i].update(isGreen, agents, i, centerRadius);
     }
 }
 
-//--------------------------------------------------------------
-// サイバー横断歩道を描く関数
-void ofApp::drawCyberCrosswalk(float centerX, float centerY, float w, float h, bool vertical) {
-    float time = ofGetElapsedTimef();
-    ofVec2f mouse(ofGetMouseX(), ofGetMouseY());
+void ofApp::drawWireframeBuilding(float x, float y, float w, float h, ofColor c) {
+    ofNoFill();
+    ofSetLineWidth(1);
+    ofSetColor(c, 150);
+    ofDrawRectangle(x, y, w, h);
     
-    int numStripes = 15;
-    float step = (vertical ? w : h) / numStripes;
+    float step = 20;
+    ofSetColor(c, 50);
+    for(float i=0; i<w; i+=step) ofDrawLine(x+i, y, x+i, y+h);
+    for(float j=0; j<h; j+=step) ofDrawLine(x, y+j, x+w, y+j);
     
-    // 色の設定：青ならシアン、赤なら赤紫色
-    ofColor stripeColor = isGreen ? ofColor(0, 255, 255, 150) : ofColor(255, 0, 100, 150);
+    ofFill();
+    if(ofRandom(1.0) < 0.1) {
+        ofSetColor(c, 200);
+        float rx = ((int)ofRandom(w/step)) * step;
+        float ry = ((int)ofRandom(h/step)) * step;
+        ofDrawRectangle(x+rx, y+ry, step, step);
+    }
+}
+
+void ofApp::drawNeonSign(float x, float y, string text, ofColor c, bool vertical) {
+    ofSetColor(c);
+    if(vertical) {
+        for(int i=0; i<text.length(); i++) {
+            string s = text.substr(i, 1);
+            ofDrawBitmapString(s, x, y + i * 15);
+        }
+        ofNoFill();
+        ofDrawRectangle(x-5, y-15, 20, text.length()*15 + 10);
+    } else {
+        ofDrawBitmapString(text, x, y);
+        ofNoFill();
+        ofDrawRectangle(x-5, y-12, text.length()*8 + 10, 20);
+    }
+}
+
+void ofApp::drawCyberCrosswalk(float x1, float y1, float x2, float y2, float width) {
+    ofVec2f start(x1, y1);
+    ofVec2f end(x2, y2);
+    ofVec2f dir = end - start;
+    float len = dir.length();
+    dir.normalize();
+    ofVec2f perp(-dir.y, dir.x);
     
-    for(int i = 0; i < numStripes; i++) {
+    int numStripes = (int)(len / 40);
+    float time = ofGetElapsedTimef(); // 時間を取得
+    
+    ofSetLineWidth(width);
+    
+    for(int i=0; i<numStripes; i++) {
+        float t = ofMap(i, 0, numStripes, 0, 1);
+        ofVec2f pCenter = start.getInterpolated(end, t);
+        
+        ofColor col;
+        if(isGreen) col = ofColor(0, 255, 255, 100); 
+        else col = ofColor(255, 0, 50, 50); 
+        
+        float distToAgent = 1000;
+        for(auto& a : agents) {
+            float d = a.pos.distance(pCenter);
+            if(d < distToAgent) distToAgent = d;
+        }
+        
+        if(distToAgent < 50) {
+            col = ofColor(255, 255, 255, 200);
+            width = 6.0; 
+        } else {
+            width = 4.0;
+        }
+
+        ofSetColor(col);
+        
         ofPolyline line;
-        
-        float basePos = (vertical ? centerX - w/2 : centerY - h/2) + i * step;
-        
-        // 線の分割数（細かくすると滑らかに曲がる）
-        int resolution = 20;
-        
-        for(int j = 0; j <= resolution; j++) {
-            float t = (float)j / resolution;
+        int res = 10;
+        for(int j=0; j<=res; j++) {
+            float sideT = ofMap(j, 0, res, -0.5, 0.5);
+            ofVec2f point = pCenter + perp * (width * 8.0) * sideT;
             
-            // 本来の直線上の座標
-            float lx = vertical ? basePos : centerX - w/2 + w * t;
-            float ly = vertical ? centerY - h/2 + h * t : basePos;
-            
-            // 変形ロジック
-            ofVec2f point(lx, ly);
-            
-            // 1. マウスとの反発（空間歪曲）
-            float dist = point.distance(mouse);
-            if(dist < 250) {
-                ofVec2f dir = point - mouse;
-                dir.normalize();
-                // ガウス関数的な変形
-                float offset = 50.0 * exp(-dist * dist / (2 * 60 * 60));
-                point += dir * offset;
-            }
-            
-            // 2. 信号が青の時の「流れ」アニメーション
+            // --- 修正箇所 2: time変数を使って波打つように ---
             if(isGreen) {
-                float flow = sin(t * 10 + time * 5) * 5.0; // 波打つ
-                if(vertical) point.x += flow;
-                else point.y += flow;
-                
-                // ストライプ自体が流れる演出
-                if(vertical) point.x += sin(time*2 + i)*2;
-            } else {
-                // 赤信号の時はグリッチ（ノイズ）のような揺れ
-                if(ofRandom(1.0) < 0.05) {
-                    if(vertical) point.x += ofRandom(-5, 5);
-                    else point.y += ofRandom(-5, 5);
-                }
+                // timeを使うことで時間経過でアニメーションします
+                point += dir * sin(time * 5.0 + t * 5.0) * 3.0;
             }
             
-            // --- 修正箇所：ここを変更しました ---
-            // pointをそのまま渡さず、xとyに分解して渡します
             line.addVertex(point.x, point.y);
         }
-        
-        ofSetColor(stripeColor);
-        ofSetLineWidth(3);
         line.draw();
-        
-        // 飾りのドット
-        if(isGreen && i % 2 == 0) {
-            ofSetColor(255, 255);
-            // getPointAtPercentはofVec3fを返すのでそのまま使えるはずですが念の為
-            auto p = line.getPointAtPercent(fmod(time * 0.5 + i*0.1, 1.0));
-            ofDrawCircle(p.x, p.y, 2);
-        }
     }
 }
 
-//--------------------------------------------------------------
 void ofApp::draw(){
-    // 加算合成で発光感を出す
+    ofBackground(5, 5, 10);
     ofEnableBlendMode(OF_BLENDMODE_ADD);
     
     float w = ofGetWidth();
     float h = ofGetHeight();
+    float hw = w/2;
+    float hh = h/2;
+    float rw = roadWidth/2;
     
-    // 1. 地面のグリッドを描画（背景）
-    ofSetColor(30);
-    ofSetLineWidth(1);
-    float gridSize = 50;
-    // マウスでグリッドも歪ませる
-    for(float x=0; x<w; x+=gridSize) {
-        for(float y=0; y<h; y+=gridSize) {
-            ofVec2f p(x, y);
-            float d = p.distance(ofVec2f(ofGetMouseX(), ofGetMouseY()));
-            if(d < 200) p += (p - ofVec2f(ofGetMouseX(), ofGetMouseY())).normalize() * (200-d)*0.2;
-            ofDrawCircle(p.x, p.y, 1);
-        }
-    }
+    ofSetColor(20, 20, 40);
+    ofSetLineWidth(2);
+    ofDrawLine(hw-rw, 0, hw-rw, h);
+    ofDrawLine(hw+rw, 0, hw+rw, h);
+    ofDrawLine(0, hh-rw, w, hh-rw);
+    ofDrawLine(0, hh+rw, w, hh+rw);
     
-    // 2. サイバー横断歩道の描画
-    float roadW = 300;
-    // 縦（上）
-    drawCyberCrosswalk(w/2, h/2 - roadW, roadW, roadW, true);
-    // 縦（下）
-    drawCyberCrosswalk(w/2, h/2 + roadW, roadW, roadW, true);
-    // 横（左）
-    drawCyberCrosswalk(w/2 - roadW, h/2, roadW, roadW, false);
-    // 横（右）
-    drawCyberCrosswalk(w/2 + roadW, h/2, roadW, roadW, false);
-    
-    
-    // 3. 中央のフロア一体型信号機（巨大なリング）
     ofPushMatrix();
-    ofTranslate(w/2, h/2);
-    
-    // タイマーゲージ
-    ofNoFill();
-    ofSetLineWidth(5);
-    ofColor signalColor = isGreen ? ofColor::cyan : ofColor::red;
-    ofSetColor(signalColor);
-    
-    float radius = 120;
-    // ゲージのアニメーション（青なら減っていく、赤なら増えていく）
-    float angle = isGreen ? ofMap(signalTimer, 0, maxTime, 360, 0) : ofMap(signalTimer, 0, maxTime, 0, 360);
-    
-    ofPath arc;
-    arc.setCircleResolution(60);
-    arc.arc(0, 0, radius, radius, 0, angle);
-    arc.setStrokeColor(signalColor);
-    arc.setStrokeWidth(5);
-    arc.setFilled(false);
-    arc.draw();
-    
-    // テキスト
-    ofFill();
-    ofSetColor(255);
-    string text = isGreen ? "GO" : "STOP";
-    ofDrawBitmapString(text, -10, 5);
-    
-    // 回転する装飾リング
-    ofRotateDeg(ofGetElapsedTimef() * 50);
-    ofSetColor(signalColor, 100);
-    ofDrawCircle(radius + 20, 0, 5);
-    ofDrawCircle(-(radius + 20), 0, 5);
-    
+    ofTranslate(hw - rw - 20, hh - rw - 20);
+    drawWireframeBuilding(-200, -200, 200, 200, ofColor(0, 100, 255)); 
+    drawNeonSign(-150, -100, "SHIBUYA VISION", ofColor::cyan);
+    if(ofRandom(1.0) < 0.1) {
+        ofSetColor(255, 200);
+        ofDrawRectangle(-180, -180, 160, 100);
+    }
     ofPopMatrix();
     
+    ofPushMatrix();
+    ofTranslate(hw + rw + 20, hh - rw - 20);
+    drawWireframeBuilding(0, -150, 150, 150, ofColor(0, 255, 100)); 
+    drawNeonSign(20, -100, "STATION", ofColor::lime);
+    ofNoFill();
+    ofSetColor(0, 255, 0, 100);
+    ofDrawRectangle(10, -50, 100, 40);
+    ofPopMatrix();
     
-    // 4. エージェント（人）の描画
+    ofPushMatrix();
+    ofTranslate(hw - rw - 20, hh + rw + 20);
+    ofNoFill();
+    ofSetColor(255, 0, 100, 150);
+    for(int i=0; i<5; i++) ofDrawCircle(-60, 60, 40 + i*10);
+    drawNeonSign(-80, 60, "109", ofColor::magenta);
+    ofPopMatrix();
+    
+    ofPushMatrix();
+    ofTranslate(hw + rw + 20, hh + rw + 20);
+    drawWireframeBuilding(0, 0, 180, 180, ofColor(255, 100, 0)); 
+    drawNeonSign(20, 30, "CENTER-GAI", ofColor::yellow);
+    drawNeonSign(80, 60, "KARAOKE", ofColor::cyan);
+    drawNeonSign(40, 90, "DRUG STORE", ofColor::white);
+    ofPopMatrix();
+    
+    float zw = 4.0;
+    drawCyberCrosswalk(hw-rw+10, hh-rw-10, hw+rw-10, hh-rw-10, zw);
+    drawCyberCrosswalk(hw-rw+10, hh+rw+10, hw+rw-10, hh+rw+10, zw);
+    drawCyberCrosswalk(hw-rw-10, hh-rw+10, hw-rw-10, hh+rw-10, zw);
+    drawCyberCrosswalk(hw+rw+10, hh-rw+10, hw+rw+10, hh+rw-10, zw);
+    drawCyberCrosswalk(hw-rw+10, hh-rw+10, hw+rw-10, hh+rw-10, zw);
+    drawCyberCrosswalk(hw+rw-10, hh-rw+10, hw-rw+10, hh+rw-10, zw);
+
     for(auto &a : agents) {
         a.draw();
     }
     
-    // 5. 衝撃波の描画
-    ofSetLineWidth(2);
-    ofNoFill();
-    for(auto &r : ripples) {
-        ofSetColor(255, r.alpha);
-        ofDrawCircle(r.pos, r.radius);
+    ofPushMatrix();
+    ofTranslate(hw, hh);
+    
+    float pulse = (sin(ofGetElapsedTimef() * 5.0) + 1.0) * 0.5;
+    if(isGreen) {
+        ofSetColor(0, 255, 255, 50 + pulse * 100);
+        ofDrawCircle(0, 0, roadWidth * 0.2); 
+        ofSetColor(0, 255, 255);
+        ofDrawBitmapString("WALK", -15, 5);
+        
+        float angle = ofMap(signalTimer, 0, 8.0, 360, 0);
+        ofNoFill();
+        ofSetLineWidth(3);
+        ofPath arc;
+        arc.arc(0, 0, 60, 60, 0, angle);
+        arc.setStrokeColor(ofColor(0, 255, 255));
+        arc.setStrokeWidth(2);
+        arc.setFilled(false);
+        arc.draw();
+        
+    } else {
+        ofSetColor(255, 0, 50, 50 + pulse * 100);
+        ofDrawCircle(0, 0, roadWidth * 0.2);
+        ofSetColor(255, 0, 50);
+        ofDrawBitmapString("STOP", -15, 5);
+        
+        ofSetLineWidth(2);
+        ofDrawLine(-40, -40, 40, 40);
+        ofDrawLine(40, -40, -40, 40);
     }
-    ofFill();
+    ofPopMatrix();
     
     ofDisableBlendMode();
     
-    // UI情報
-    ofSetColor(255);
-    ofDrawBitmapString("Click to create Shockwave", 20, 20);
+    ofNoFill();
+    ofSetColor(255, 100);
+    ofDrawCircle(ofGetMouseX(), ofGetMouseY(), 20);
 }
 
-//--------------------------------------------------------------
 void ofApp::mousePressed(int x, int y, int button){
-    // クリックで衝撃波を追加
-    Ripple r;
-    r.pos = ofVec2f(x, y);
-    r.radius = 10;
-    r.alpha = 255;
-    ripples.push_back(r);
+    isGreen = !isGreen;
+    signalTimer = 0;
 }
