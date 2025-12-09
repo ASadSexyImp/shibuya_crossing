@@ -1,0 +1,25 @@
+# コンパイルされたアプリケーションと中間ファイル
+bin/
+obj/
+build/
+*.o
+*.lib
+*.dll
+*.dylib
+*.so
+*.exe
+*.app
+.vscode/
+
+# IDEの設定ファイル（個人の環境依存ファイルを避けるため）
+.DS_Store
+*.layout
+*.user
+.vs/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.opensdf
+*.sdf
+*.suo
+
+# ただし、画像やフォントなどの素材(dataフォルダ)はアップロードしたい場合
+!bin/data/
